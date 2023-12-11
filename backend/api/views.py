@@ -225,14 +225,20 @@ class MainView(View):
         matching_options = []
         for product in products_info_objects:
             product_key = product.id
-            matching_options_url = reverse('matching_options', args=[product_key])
-            matching_options.append(matching_options_url)
+        
+            if product_key is not None:
+                matching_options_url = reverse('matching_options', kwargs={'product_id': product_key})
+                matching_options.append(matching_options_url)
+            else:
+                print(f"Warning: product_key is None for product {product.id}")
 
         # Логика для num_matches
         if num_matches:
-            # Ограничение количества вариантов соответствия в соответствии с параметром num_matches
+            # Ограничение количества вариантов соответствия в соответствии с результатами ML-модели
             num_matches = int(num_matches)
-            matching_options = matching_options[:num_matches]
+            # Получаем фактическое количество вариантов соответствия из ML-модели
+            num_matches_from_ml_model = min(num_matches, len(matching_options))
+            matching_options = matching_options[:num_matches_from_ml_model]
 
         # Сериализация цен продавцов
         dealer_prices = DealerPrice.objects.filter(**dealer_filter)
@@ -252,21 +258,26 @@ class MainView(View):
     @transaction.atomic
     def post(self, request, *args, **kwargs):
         action = request.POST.get('action')
-        
+
         if action == 'Да':
-            # Обработка "Да"
-            # Добавить логику для "Да"
             return JsonResponse({"message": "Да"})
         elif action == 'Нет':
-            # Обработка "Нет"
-            # Добавить логику для "Нет"
             return JsonResponse({"message": "Нет"})
         elif action == 'Сопоставить':
-            # Обработка "Сопоставить"
-            # Добавить логику для "Сопоставить"
-            return JsonResponse({"message": "Сопоставить"})
+            product_id = request.POST.get('product_id')
+            product = get_object_or_404(Product, id=product_id)
+            product_dealer_key = product.product_dealer_keys.first()
+
+            if product_dealer_key:
+                product_dealer_key.matched = True
+                product_dealer_key.save()
+
+                # Логика для "Сопоставить"
+                return JsonResponse({"message": "Сопоставлено успешно"})
+            else:
+                return JsonResponse({"error": "Товар не имеет ключа соответствия"}, status=400)
         else:
-            return JsonResponse({"error": "Неверное действие"}, status=400) # На случай возможных изменений в коде
+            return JsonResponse({"error": "Неверное действие"}, status=400)
     
 
 class MatchingOptionsView(View):
@@ -327,106 +338,17 @@ class MarkupProductView(View):
 
 class StatisticsView(View):
     """
-    Представление для работы со статистикой.
+    Представление для обработки статистики и отчетности.
     """
-    
-    def get(self, request):
-        # Получаем начальную и конечную дату из запроса
-        start_date_str = request.GET.get('start_date')
-        end_date_str = request.GET.get('end_date')
 
-        # Используем даты из запроса или значения по умолчанию
-        if not start_date_str or not end_date_str:
-            end_date = timezone.now()
-            start_date = end_date - timedelta(days=6)
-        else:
-            start_date = parse_date(start_date_str)
-            end_date = parse_date(end_date_str)
+    def post(self, request, *args, **kwargs):
+        start_date = request.POST.get('start_date')
+        end_date = request.POST.get('end_date')
 
-        # Статистика общего количества размеченных товаров за выбранный период
-        total_markup_count = ProductDealerKey.objects.filter(
-            marking_date__range=[start_date, end_date]
-        ).count()
-
-        # Статистика выбора предложенных вариантов за выбранный период
+        # Логика для сбора статистики по порядковому номеру выбора и невыбранным вариантам
         chosen_options_stats = ProductDealerKey.objects.filter(
-            marking_date__range=[start_date, end_date]
-        ).exclude(key=None).values(
-            'product_id', 'dealer_id', 'product_id__category_id'
-        ).annotate(
-            total_choices=Count('id'),
-            chosen_option_count=Count('key')
-        )
-
-        # Статистика по порядку выбора вариантов за выбранный период
-        choices_order = chosen_options_stats.values(
-            'choices_order', 'product_id', 'dealer_id', 'product_id__category_id'
-        ).annotate(
-            choices_count=Count('choices_order')
-        ).order_by('choices_order')
-
-        # Счетчик для порядкового номера выбора вариантов
-        choices_counter = 1
-
-        # Присвоение порядкового номера выбора вариантов
-        for stat in choices_order:
-            stat['choices_order'] = choices_counter
-            choices_counter += 1
-
-        # Преобразование QuerySet в список для сохранения в модель
-        chosen_options_stats_list = list(chosen_options_stats)
-        choices_order_list = list(choices_order)
-
-        # Статистика по тому, как часто ни один вариант не выбран
-        none_chosen_count = chosen_options_stats.filter(chosen_option_count=0).count()
-
-        # Получаем дилеров и категории
-        dealers = Dealer.objects.all()
-        categories = Product.objects.values('category_id').distinct()
-
-        # Сериализация статистики
-        statistics_data = Statistics.objects.all()
-        statistics_serialized = StatisticsSerializer(statistics_data, many=True).data
-
-        context = {
-            'statistics': statistics_serialized,
-            'start_date': start_date.strftime("%Y-%m-%d"),
-            'end_date': end_date.strftime("%Y-%m-%d"),
-            'total_markup_count': total_markup_count,
-            'chosen_options_stats': chosen_options_stats_list,
-            'choices_order': choices_order_list,
-            'none_chosen_count': none_chosen_count,
-            'dealers': dealers,
-            'categories': categories,
-        }
-
-        # Сохранение статистики в базе данных
-        Statistics.objects.create(
-            start_date=start_date,
-            end_date=end_date,
-            total_markup_count=total_markup_count,
-            none_chosen_count=none_chosen_count,
-            choices_order=choices_order_list,
-            chosen_options_stats=chosen_options_stats_list,
-        )
-
-        return JsonResponse(context)
-
-
-class VariantStatisticsView(View):
-    """
-    Представление для статистики по номеру варианта.
-    """
-
-    def get(self, request):
-        # Логика для получения статистики по порядковому номеру выбора и невыбранным вариантам
-        start_date = request.GET.get('start_date')
-        end_date = request.GET.get('end_date')
-
-        # Ваша логика для фильтрации ProductDealerKey и сбора статистики
-        # Пример:
-        chosen_options_stats = ProductDealerKey.objects.filter(
-            marking_date__range=[start_date, end_date]
+            marking_date__range=[start_date, end_date],
+            product__isnull=False
         ).values(
             'choices_order', 'product_id', 'dealer_id', 'product_id__category_id'
         ).annotate(
@@ -434,13 +356,54 @@ class VariantStatisticsView(View):
             chosen_option_count=Count('id', filter=~Q(key=None)),
         ).order_by('choices_order')
 
-        # Счетчик для порядкового номера выбора вариантов
-        choices_counter = 1
+        # Статистика по тому, как часто ни один вариант не выбран за выбранный период
+        none_chosen_count = chosen_options_stats.filter(chosen_option_count=0).count()
 
-        # Присвоение порядкового номера выбора вариантов
-        for stat in chosen_options_stats:
-            stat['choices_order'] = choices_counter
-            choices_counter += 1
+        # Преобразование QuerySet в список для сохранения в модель
+        chosen_options_stats_list = list(chosen_options_stats)
+
+        # Сериализация статистики
+        statistics_serializer = StatisticsSerializer(data={
+            'start_date': start_date,
+            'end_date': end_date,
+            'total_markup_count': chosen_options_stats.count(),
+            'none_chosen_count': none_chosen_count,
+            'choices_order': [stat['choices_order'] for stat in chosen_options_stats_list],
+            'chosen_options_stats': chosen_options_stats_list,
+        })
+
+        if statistics_serializer.is_valid():
+            statistics_serializer.save()
+            # Возвращаем сериализованную статистику в виде JSON
+            return JsonResponse(statistics_serializer.data)
+        else:
+            return JsonResponse({"error": "Invalid data"}, status=400)
+
+    def get(self, request, *args, **kwargs):
+        # Логика для обработки GET-запроса
+        return JsonResponse({"message": "GET request processed successfully"})
+
+
+class VariantStatisticsView(View):
+    """
+    Представление для статистики по номеру варианта.
+    """
+
+    def post(self, request, *args, **kwargs):
+        # Логика для получения статистики по порядковому номеру выбора и невыбранным вариантам
+        start_date = request.POST.get('start_date')
+        end_date = request.POST.get('end_date')
+
+        # Логика для фильтрации данных и сбора статистики
+        chosen_options_stats = ProductDealerKey.objects.filter(
+            marking_date__range=[start_date, end_date],
+            product__isnull=False
+        ).values(
+            'choices_order', 'product_id', 'key__dealer__name'
+        ).annotate(
+            choices_count=Count('choices_order'),
+            chosen_option_count=Count('id', filter=~Q(key=None)),
+        ).order_by('choices_order')
 
         # Преобразование QuerySet в список для сохранения в модель
         chosen_options_stats_list = list(chosen_options_stats)
@@ -448,22 +411,35 @@ class VariantStatisticsView(View):
         # Статистика по тому, как часто ни один вариант не выбран за выбранный период
         none_chosen_count = chosen_options_stats.filter(chosen_option_count=0).count()
 
-        # Получаем дилеров и категории
+        # Получаем список дилеров
         dealers = Dealer.objects.all()
-        categories = Product.objects.values('category_id').distinct()
+        
+        # Создаем словарь для хранения статистики в формате, соответствующему структуре шаблона
+        statistics_data = {}
 
-        # Сериализация статистики
-        statistics_data = Statistics.objects.all()
-        statistics_serialized = StatisticsSerializer(statistics_data, many=True).data
+        # Заполняем словарь статистики
+        for stat in chosen_options_stats_list:
+            dealer_name = stat['key__dealer__name']
+            choices_order = stat['choices_order']
 
+            if dealer_name not in statistics_data:
+                # Инициализируем словарь для дилера, если он еще не существует
+                statistics_data[dealer_name] = {'dealer': dealer_name}
+
+            # Добавляем информацию о выборе в соответствующий вариант
+            statistics_data[dealer_name][f'Вариант {choices_order}'] = stat['chosen_option_count']
+
+        # Сериализация статистики в формат JSON
         context = {
-            'statistics': statistics_serialized,
-            'start_date': start_date.strftime("%Y-%m-%d") if start_date else None,
-            'end_date': end_date.strftime("%Y-%m-%d") if end_date else None,
-            'chosen_options_stats': chosen_options_stats_list,
+            'statistics': list(statistics_data.values()),
+            'start_date': start_date,
+            'end_date': end_date,
             'none_chosen_count': none_chosen_count,
             'dealers': dealers,
-            'categories': categories,
         }
 
         return JsonResponse(context)
+    
+    def get(self, request, *args, **kwargs):
+        # Логика для обработки GET-запроса
+        return JsonResponse({"message": "GET request processed successfully"})

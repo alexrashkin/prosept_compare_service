@@ -101,6 +101,10 @@ python3 -m venv env
 python3 -m pip install --upgrade pip
 ```
 
+```
+cd prosept_compare_service/backend
+```
+
 Установить зависимости из файла requirements.txt:
 
 ```

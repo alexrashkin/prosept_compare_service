@@ -36,6 +36,7 @@ def import_products_from_csv(path_to_csv: str) -> None:
         next(csv_reader)
         products_list = [
             Product(
+                id=id,
                 article=article,
                 ean_13=int(float(ean_13)) if ean_13 else None,
                 name=name,

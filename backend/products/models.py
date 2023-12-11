@@ -18,8 +18,8 @@ class Product(models.Model):
     """
     Модель данных для таблицы 'marketing_product'.
     """
-    id = models.IntegerField(null=True)
-    article = models.CharField(max_length=100, primary_key=True)
+    id = models.IntegerField(primary_key=True, unique=True)
+    article = models.CharField(max_length=100, null=True)
     ean_13 = models.FloatField(null=True)
     name = models.CharField(max_length=250)
     cost = models.FloatField(null=True)
@@ -67,15 +67,17 @@ class ProductDealerKey(models.Model):
     Модель данных, связывающая DealerPrice c Product.
     Заполняется данными, возвращенными ML.
     """
-    id = models.AutoField(primary_key=True)
-    key = models.ForeignKey(DealerPrice,
-                            related_name='matching_products',
-                            on_delete=models.CASCADE,
-                            db_column='key_id')
+    key = models.ForeignKey(
+        DealerPrice,
+        related_name='matching_products',
+        on_delete=models.CASCADE,
+        db_column='key_id',
+    )
     product_id = models.ForeignKey(Product,
                                    related_name='product_dealer_keys',
                                    on_delete=models.CASCADE)
-    compliance_number = models.PositiveSmallIntegerField()    
+    choices_order = models.PositiveIntegerField(null=True)
+    marking_date = models.DateTimeField(null=True)
 
     def __str__(self):
         return f'ProductDealerKey {self.id} for Product {self.product}'
